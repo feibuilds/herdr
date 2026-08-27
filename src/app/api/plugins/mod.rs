@@ -331,15 +331,29 @@ impl App {
         id: String,
         params: PaneLinkActivateParams,
     ) -> String {
-        let (pane_id, url) =
+        self.handle_pane_link_activate_with(id, params, crate::platform::open_file_reference)
+    }
+
+    pub(super) fn handle_pane_link_activate_with(
+        &mut self,
+        id: String,
+        params: PaneLinkActivateParams,
+        open_file: impl FnOnce(
+            &std::path::Path,
+            Option<u32>,
+            Option<u32>,
+        ) -> std::io::Result<Option<std::process::Child>>,
+    ) -> String {
+        let (pane_id, link) =
             match self.read_checked_pane_link(&id, &params, "activation", |runtime, col, row| {
                 runtime
                     .link_target_at(col, row)
-                    .and_then(crate::app::actions::url_from_link_target)
+                    .map(crate::app::actions::ActivatedPaneLink::from_target)
             }) {
                 Ok(value) => value,
                 Err(error) => return error,
             };
+        let url = link.as_ref().and_then(|link| link.uri()).map(str::to_owned);
         let handled = match url.as_deref() {
             Some(url) => match self.invoke_plugin_link_handler_for_url(url, pane_id) {
                 Ok(handled) => handled,
@@ -350,7 +364,39 @@ impl App {
             },
             None => false,
         };
-        encode_success(id, ResponseResult::PaneLinkActivated { url, handled })
+        if handled {
+            return encode_success(id, ResponseResult::PaneLinkActivated { url, handled });
+        }
+
+        // Files open on the server machine, where the pane's paths exist. Web
+        // URLs never resolve here and keep opening on the client machine.
+        let cwd = self.pane_link_cwd(&params.pane_id);
+        let Some(file) = link.and_then(|link| link.file_reference(cwd.as_deref())) else {
+            return encode_success(id, ResponseResult::PaneLinkActivated { url, handled });
+        };
+        match open_file(&file.path, file.line, file.column) {
+            Ok(Some(child)) => self.detached_process_children.push(child),
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(err = %err, path = %file.path.display(), "failed to open pane file link");
+            }
+        }
+        encode_success(id, ResponseResult::PaneLinkActivated { url, handled: true })
+    }
+
+    fn pane_link_cwd(&self, public_pane_id: &str) -> Option<std::path::PathBuf> {
+        let (ws_idx, pane_id) = self.parse_pane_id(public_pane_id)?;
+        let tab = self
+            .state
+            .workspaces
+            .get(ws_idx)?
+            .tabs
+            .iter()
+            .find(|tab| tab.terminal_id(pane_id).is_some())?;
+        // The foreground process (for example an agent) may have changed
+        // directory after the shell started it.
+        tab.foreground_cwd_for_pane(pane_id, &self.terminal_runtimes)
+            .or_else(|| tab.cwd_for_pane(pane_id, &self.state.terminals, &self.terminal_runtimes))
     }
 
     pub(crate) fn invoke_plugin_link_handler_for_url(
@@ -941,6 +987,117 @@ action = "open"
             "activation must not write to the PTY"
         );
         std::fs::remove_dir_all(root).expect("remove test plugin");
+    }
+
+    fn app_with_link_screen(name: &str, bytes: &[u8], cwd: &std::path::Path) -> (App, String) {
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new(name)];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let public_id = app.public_pane_id(0, pane_id).unwrap();
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal")
+            .cwd = cwd.to_path_buf();
+        let (runtime, _rx) = crate::terminal::TerminalRuntime::test_with_channel(120, 4);
+        runtime.test_process_pty_bytes(bytes);
+        app.terminal_runtimes.insert(terminal_id, runtime);
+        (app, public_id)
+    }
+
+    fn link_click(pane_id: &str, col: usize) -> PaneLinkActivateParams {
+        PaneLinkActivateParams {
+            pane_id: pane_id.to_owned(),
+            viewport_row: 0,
+            col: col as u16,
+            content_revision: None,
+            offset_from_bottom: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn pane_link_activation_opens_existing_file_reference_from_pane_cwd() {
+        let root = unique_temp_path("file-link-cwd");
+        let path = root.join("src/lib.rs");
+        std::fs::create_dir_all(path.parent().expect("file parent")).expect("fixture directory");
+        std::fs::write(&path, "pub fn linked() {}\n").expect("fixture file");
+        let line = "changed `src/lib.rs:27:6`, then src/missing.rs:3";
+        let (mut app, pane_id) = app_with_link_screen("file-link", line.as_bytes(), &root);
+
+        let mut opened = None;
+        let response = app.handle_pane_link_activate_with(
+            "click".into(),
+            link_click(&pane_id, line.find("lib.rs").expect("path")),
+            |opened_path, opened_line, opened_column| {
+                opened = Some((opened_path.to_path_buf(), opened_line, opened_column));
+                Ok(None)
+            },
+        );
+        assert_eq!(opened, Some((path, Some(27), Some(6))));
+        assert!(matches!(
+            response_result(&response),
+            ResponseResult::PaneLinkActivated {
+                url: None,
+                handled: true
+            }
+        ));
+
+        let response = app.handle_pane_link_activate_with(
+            "missing".into(),
+            link_click(&pane_id, line.find("missing").expect("missing path")),
+            |_, _, _| panic!("missing files must not open"),
+        );
+        assert!(matches!(
+            response_result(&response),
+            ResponseResult::PaneLinkActivated {
+                url: None,
+                handled: false
+            }
+        ));
+        std::fs::remove_dir_all(root).expect("remove file-link fixture");
+    }
+
+    #[tokio::test]
+    async fn pane_link_activation_opens_unclaimed_osc8_file_uri_but_not_web_urls() {
+        let root = unique_temp_path("osc8-file-link");
+        std::fs::create_dir_all(&root).expect("fixture directory");
+        let path = root.join("before after.png");
+        std::fs::write(&path, "image\n").expect("fixture file");
+        let uri = format!("file://{}", path.display().to_string().replace(' ', "%20"));
+        let screen = format!("\x1b]8;;{uri}\x1b\\IMAGE\x1b]8;;\x1b\\ https://example.com/x");
+        let (mut app, pane_id) = app_with_link_screen("osc8-file", screen.as_bytes(), &root);
+
+        let mut opened = None;
+        let response = app.handle_pane_link_activate_with(
+            "file".into(),
+            link_click(&pane_id, 1),
+            |opened_path, line, column| {
+                opened = Some((opened_path.to_path_buf(), line, column));
+                Ok(None)
+            },
+        );
+        assert_eq!(opened, Some((path, None, None)));
+        assert!(matches!(
+            response_result(&response),
+            ResponseResult::PaneLinkActivated { url: Some(url), handled: true } if url == uri
+        ));
+
+        let response = app.handle_pane_link_activate_with(
+            "web".into(),
+            link_click(&pane_id, "IMAGE https://ex".len()),
+            |_, _, _| panic!("web URLs must keep the client browser path"),
+        );
+        assert!(matches!(
+            response_result(&response),
+            ResponseResult::PaneLinkActivated { url: Some(url), handled: false }
+                if url == "https://example.com/x"
+        ));
+        std::fs::remove_dir_all(root).expect("remove OSC 8 fixture");
     }
 
     fn test_app() -> App {

@@ -23,6 +23,8 @@ Ctrl-click opens pane links when your terminal sends the modified click to Herdr
 
 With `ui.mouse_capture = true` (the default), Herdr handles Ctrl-clicks. Matching enabled plugins run first. A handler launch failure shows an error and stops. Unmatched `http://` and `https://` links open in the default browser on the machine running the Herdr client. Other links need a matching plugin. Explicit hyperlinks are not advertised to the outer terminal in this mode, so native bypass clicks on labeled links are unavailable, including Command-click on macOS.
 
+Ctrl-click also opens existing file references such as `src/main.rs`, `src/main.rs:12`, or `src/main.rs:12:4`, and local `file://` hyperlinks that no plugin claims. Relative paths resolve from that pane's current working directory. Files open on the machine running the Herdr server. Set `HERDR_EDITOR` to an editor command that accepts the location as its final argument, such as `HERDR_EDITOR="code --goto"`; without it, Herdr uses the platform's default file opener and line or column placement depends on that opener.
+
 With `ui.mouse_capture = false`, explicit hyperlinks are passed to the outer terminal. Use its normal link shortcuts and warnings. These clicks do not invoke Herdr plugins. Disabling capture also disables Herdr's mouse controls, including clicking tabs and dragging split borders.
 
 Windows Terminal can still intercept URLs it detects in visible text. For reliable plugin priority on those URLs, set `"experimental.detectURLs": false` in Windows Terminal's `settings.json`. This setting applies to all Windows Terminal profiles. Herdr does not change it.
