@@ -194,6 +194,7 @@ pub fn open_file_reference(
     _path: &std::path::Path,
     _line: Option<u32>,
     _column: Option<u32>,
+    _configured_editor: &str,
 ) -> std::io::Result<Option<std::process::Child>> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,

@@ -93,6 +93,15 @@ new_cwd = "follow"
 
 `new_cwd = "follow"` keeps the default behavior and inherits the source pane or workspace. When there is no source workspace, Herdr starts in `$HOME`. Use `"home"` to always start in `$HOME`, `"current"` to use Herdr's process directory, or a fixed path such as `"~/Projects"`. Explicit `--cwd` values from the CLI or socket API still take precedence.
 
+Choose the editor used for Ctrl-clicked terminal file references from the Editor tab in Settings. The built-in choices apply immediately and persist this setting:
+
+```toml
+[terminal]
+file_editor = "zed"
+```
+
+Use `"system"`, `"zed"`, `"subl"`, or `"code --goto"`. Any other command is also accepted when configured manually; Herdr appends `path:line:column` as its final argument. An empty value falls back to `HERDR_EDITOR` for compatibility, then to the platform file opener. Config reloads apply the new editor without restarting Herdr or its panes.
+
 ## Worktrees
 
 Set the root directory Herdr uses for Git worktree checkouts created from the sidebar:

@@ -27,6 +27,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) sound_enabled: bool,
     pub(super) toast_delivery: crate::config::ToastDelivery,
+    pub(super) file_editor: String,
     pub(super) toast_delay_seconds: u64,
     pub(super) toast_position: crate::config::ToastHerdrPosition,
     pub(super) copy_on_select: bool,
@@ -387,6 +388,7 @@ pub(super) enum ClientSettingsSection {
     Indicators,
     Sound,
     Toast,
+    Editor,
     Integrations,
 }
 
@@ -396,6 +398,7 @@ impl ClientSettingsSection {
         Self::Indicators,
         Self::Sound,
         Self::Toast,
+        Self::Editor,
         Self::Integrations,
     ];
 
@@ -405,6 +408,7 @@ impl ClientSettingsSection {
             Self::Indicators => "indicators",
             Self::Sound => "sound",
             Self::Toast => "toasts",
+            Self::Editor => "editor",
             Self::Integrations => "integrations",
         }
     }

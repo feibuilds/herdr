@@ -331,7 +331,10 @@ impl App {
         id: String,
         params: PaneLinkActivateParams,
     ) -> String {
-        self.handle_pane_link_activate_with(id, params, crate::platform::open_file_reference)
+        let file_editor = self.state.file_editor.clone();
+        self.handle_pane_link_activate_with(id, params, |path, line, column| {
+            crate::platform::open_file_reference(path, line, column, &file_editor)
+        })
     }
 
     pub(super) fn handle_pane_link_activate_with(
