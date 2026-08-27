@@ -253,6 +253,19 @@ pub(crate) fn file_reference_arg(
     reference
 }
 
+pub(crate) fn file_editor_command(configured_editor: &str) -> Option<String> {
+    let configured_editor = configured_editor.trim();
+    if configured_editor.eq_ignore_ascii_case("system") {
+        return None;
+    }
+    if !configured_editor.is_empty() {
+        return Some(configured_editor.to_string());
+    }
+    std::env::var("HERDR_EDITOR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
 #[cfg(not(windows))]
 fn configure_background_command_platform(_command: &mut std::process::Command) {}
 
@@ -807,6 +820,13 @@ mod tests {
             file_reference_arg(path, Some(12), Some(4)),
             "/tmp/source file.rs:12:4"
         );
+    }
+
+    #[test]
+    fn configured_file_editor_overrides_or_disables_environment_fallback() {
+        assert_eq!(file_editor_command(" zed ").as_deref(), Some("zed"));
+        assert_eq!(file_editor_command("system"), None);
+        assert_eq!(file_editor_command("SYSTEM"), None);
     }
 
     #[test]

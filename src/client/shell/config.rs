@@ -127,6 +127,7 @@ impl ClientShellConfig {
             status_indicators: config.ui.status_indicators,
             sound_enabled: config.ui.sound.enabled,
             toast_delivery: config.ui.toast.delivery,
+            file_editor: config.terminal.file_editor.clone(),
             toast_delay_seconds: config.ui.toast.delay_seconds,
             toast_position: config.ui.toast.herdr.position,
             copy_on_select: config.ui.copy_on_select,
@@ -377,6 +378,9 @@ impl ClientShellConfig {
         if !invalid_section("experimental") {
             self.switch_ascii_input_source_in_prefix =
                 config.experimental.switch_ascii_input_source_in_prefix;
+        }
+        if !invalid_section("terminal") {
+            self.file_editor = config.terminal.file_editor.clone();
         }
 
         diagnostics

@@ -26,6 +26,24 @@ fn toast_index(delivery: crate::config::ToastDelivery) -> usize {
     }
 }
 
+/// Built-in choices for `terminal.file_editor`: (label, configured command).
+pub(super) const FILE_EDITOR_CHOICES: &[(&str, &str)] = &[
+    ("system default", "system"),
+    ("Zed", "zed"),
+    ("Sublime Text", "subl"),
+    ("VS Code", "code --goto"),
+];
+
+/// An empty or custom command highlights "system default", matching the
+/// opener used when no editor command is configured.
+fn file_editor_index(editor: &str) -> usize {
+    let editor = editor.trim();
+    FILE_EDITOR_CHOICES
+        .iter()
+        .position(|(_, command)| command.eq_ignore_ascii_case(editor))
+        .unwrap_or(0)
+}
+
 pub(super) fn integration_needs_install(info: &crate::api::schema::IntegrationInfo) -> bool {
     info.state == crate::api::schema::IntegrationState::Outdated
         || info.available && info.state == crate::api::schema::IntegrationState::NotInstalled
@@ -51,6 +69,7 @@ impl ClientShellState {
             ClientSettingsSection::Indicators => indicator_index(self.config.status_indicators),
             ClientSettingsSection::Sound => usize::from(!self.config.sound_enabled),
             ClientSettingsSection::Toast => toast_index(self.config.toast_delivery),
+            ClientSettingsSection::Editor => file_editor_index(&self.config.file_editor),
             ClientSettingsSection::Integrations => 0,
         }
     }
@@ -99,6 +118,7 @@ impl ClientShellState {
                 ClientSettingsSection::Theme => crate::config::THEME_NAMES.len(),
                 ClientSettingsSection::Indicators | ClientSettingsSection::Sound => 2,
                 ClientSettingsSection::Toast => 4,
+                ClientSettingsSection::Editor => FILE_EDITOR_CHOICES.len(),
                 ClientSettingsSection::Integrations => settings.integrations.len(),
             },
             _ => 0,
@@ -221,6 +241,12 @@ impl ClientShellState {
                     crate::config::ConfigEdit::ToastDelivery(delivery),
                     outcome,
                 );
+            }
+            ClientSettingsSection::Editor => {
+                let Some((_, command)) = FILE_EDITOR_CHOICES.get(selected).copied() else {
+                    return;
+                };
+                self.save_settings_edit(crate::config::ConfigEdit::FileEditor(command), outcome);
             }
             ClientSettingsSection::Integrations => self.install_recommended_integrations(outcome),
         }

@@ -1196,7 +1196,7 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
 
     state.open_settings_overlay();
     state.compose(106, 30).expect("settings overlay");
-    for _ in 0..3 {
+    for _ in 0..4 {
         let next = state.handle_input_bytes(b"\t");
         assert!(next.actions.is_empty());
     }
@@ -1313,4 +1313,51 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
             ..
         })) if integration_messages == &["installed codex"]
     ));
+}
+
+#[test]
+fn settings_editor_section_selects_the_configured_file_editor() {
+    let mut config = Config::default();
+    config.terminal.file_editor = "subl".into();
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.open_settings_overlay();
+    state.compose(106, 30).expect("settings overlay");
+    for _ in 0..4 {
+        state.handle_input_bytes(b"\t");
+    }
+    let Some(ClientShellOverlay::Settings(settings)) = state.overlay.as_ref() else {
+        panic!("settings overlay should stay open");
+    };
+    assert_eq!(settings.section, ClientSettingsSection::Editor);
+    assert_eq!(settings.selected, 2);
+
+    let frame = state.compose(106, 30).expect("editor settings");
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for label in [
+        " editor ",
+        "system default",
+        "Zed",
+        "Sublime Text",
+        "VS Code",
+    ] {
+        assert!(text.contains(label), "missing {label:?} in\n{text}");
+    }
+
+    state.handle_input_bytes(b"j");
+    state.handle_input_bytes(b"j");
+    let Some(ClientShellOverlay::Settings(settings)) = state.overlay.as_ref() else {
+        panic!("settings overlay should stay open");
+    };
+    assert_eq!(settings.selected, 3, "selection clamps to the last editor");
 }

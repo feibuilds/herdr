@@ -4,6 +4,7 @@ pub(crate) enum ConfigEdit<'a> {
     StatusIndicators(super::StatusIndicatorStyle),
     Sound(bool),
     ToastDelivery(super::ToastDelivery),
+    FileEditor(&'a str),
 }
 
 impl ConfigEdit<'_> {
@@ -13,6 +14,7 @@ impl ConfigEdit<'_> {
             Self::StatusIndicators(_) => "status indicators",
             Self::Sound(_) => "sound setting",
             Self::ToastDelivery(_) => "toast setting",
+            Self::FileEditor(_) => "file editor",
         }
     }
 
@@ -42,6 +44,12 @@ impl ConfigEdit<'_> {
                 let content = super::upsert_section_value(content, "ui.toast", "delivery", value);
                 super::remove_section_key(&content, "ui.toast", "enabled")
             }
+            Self::FileEditor(editor) => super::upsert_section_value(
+                content,
+                "terminal",
+                "file_editor",
+                &toml::Value::String(editor.to_owned()).to_string(),
+            ),
         }
     }
 }
@@ -77,6 +85,15 @@ pub(crate) fn write_edit(edit: ConfigEdit<'_>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_editor_edit_writes_a_quoted_terminal_value() {
+        let content =
+            ConfigEdit::FileEditor("code --goto").apply("[terminal]\ndefault_shell = \"nu\"\n");
+        let config: crate::config::Config = toml::from_str(&content).unwrap();
+        assert_eq!(config.terminal.file_editor, "code --goto");
+        assert_eq!(config.terminal.default_shell, "nu");
+    }
 
     #[test]
     fn update_file_at_does_not_move_a_leading_bom_into_the_file() {

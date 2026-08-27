@@ -885,10 +885,9 @@ pub fn open_file_reference(
     path: &std::path::Path,
     line: Option<u32>,
     column: Option<u32>,
+    configured_editor: &str,
 ) -> std::io::Result<Option<std::process::Child>> {
-    let editor = std::env::var("HERDR_EDITOR")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
+    let editor = super::file_editor_command(configured_editor);
     let Some(editor) = editor else {
         return Command::new("xdg-open")
             .arg(path)

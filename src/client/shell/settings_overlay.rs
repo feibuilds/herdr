@@ -194,6 +194,22 @@ pub(super) fn render_settings_overlay(
                 &mut choice_hits,
             );
         }
+        ClientSettingsSection::Editor => {
+            let labels = super::super::settings::FILE_EDITOR_CHOICES
+                .iter()
+                .map(|(label, _)| *label)
+                .collect::<Vec<_>>();
+            render_choice_section(
+                buffer,
+                content,
+                "file reference editor",
+                "choose where Ctrl-click opens terminal file references",
+                &labels,
+                settings.selected,
+                palette,
+                &mut choice_hits,
+            );
+        }
         ClientSettingsSection::Integrations => {
             render_integrations(buffer, content, settings, palette);
         }

@@ -260,6 +260,9 @@ pub struct TerminalConfig {
     pub new_cwd: NewTerminalCwdConfig,
     /// Render Kitty graphics in compatible outer terminals. Default: true.
     pub kitty_graphics: Option<bool>,
+    /// Command used to open clicked file references. `system` uses the
+    /// platform opener; empty preserves the legacy HERDR_EDITOR fallback.
+    pub file_editor: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1388,16 +1391,19 @@ manifest_check = false
     fn terminal_default_shell_defaults_empty_and_parses() {
         let default_config = Config::default();
         assert!(default_config.terminal.default_shell.is_empty());
+        assert!(default_config.terminal.file_editor.is_empty());
         assert_eq!(default_config.terminal.shell_mode, ShellModeConfig::Auto);
 
         let toml = r#"
 [terminal]
 default_shell = "nu"
 shell_mode = "non_login"
+file_editor = "zed"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.terminal.default_shell, "nu");
         assert_eq!(config.terminal.shell_mode, ShellModeConfig::NonLogin);
+        assert_eq!(config.terminal.file_editor, "zed");
     }
 
     #[test]

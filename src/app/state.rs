@@ -850,6 +850,8 @@ pub struct AppState {
     pub default_shell: String,
     pub shell_mode: crate::config::ShellModeConfig,
     pub new_terminal_cwd: NewTerminalCwdConfig,
+    /// Command for Ctrl-clicked file references; see `terminal.file_editor`.
+    pub file_editor: String,
     pub pane_scrollback_limit_bytes: usize,
     pub sound: SoundConfig,
     pub toast_config: ToastConfig,
@@ -1087,6 +1089,7 @@ impl AppState {
             default_shell: String::new(),
             shell_mode: crate::config::ShellModeConfig::Auto,
             new_terminal_cwd: NewTerminalCwdConfig::Follow,
+            file_editor: String::new(),
             pane_scrollback_limit_bytes: crate::config::DEFAULT_SCROLLBACK_LIMIT_BYTES,
             sound: SoundConfig {
                 enabled: false,
