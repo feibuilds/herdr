@@ -881,6 +881,37 @@ pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
         .map(Some)
 }
 
+pub fn open_file_reference(
+    path: &std::path::Path,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> std::io::Result<Option<std::process::Child>> {
+    let editor = std::env::var("HERDR_EDITOR")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let Some(editor) = editor else {
+        return Command::new("xdg-open")
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(Some);
+    };
+
+    let reference = super::file_reference_arg(path, line, column);
+    Command::new("/bin/sh")
+        .arg("-lc")
+        .arg(format!("exec {editor} \"$1\""))
+        .arg("herdr-file-reference")
+        .arg(reference)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(Some)
+}
+
 pub fn read_clipboard_image() -> Option<ClipboardImage> {
     if running_inside_wsl() {
         if let Some(image) = read_wsl_clipboard_image_with_command(|program| Command::new(program))

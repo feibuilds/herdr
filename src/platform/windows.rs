@@ -5,6 +5,7 @@ use std::{
     mem::{size_of, MaybeUninit},
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     path::PathBuf,
+    process::Command,
     ptr::{copy_nonoverlapping, null_mut},
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering as AtomicOrdering},
@@ -2815,6 +2816,56 @@ pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
     } else {
         Err(std::io::Error::other(format!(
             "failed to open URL with ShellExecuteW: code {}",
+            result as isize
+        )))
+    }
+}
+
+pub fn open_file_reference(
+    path: &std::path::Path,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> std::io::Result<Option<std::process::Child>> {
+    let editor = std::env::var("HERDR_EDITOR")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    if let Some(editor) = editor {
+        let mut argv = command_line_to_argv(&editor).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("failed to parse editor command {editor:?}"),
+            )
+        })?;
+        let program = argv.first().cloned().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "editor command must not be empty",
+            )
+        })?;
+        argv.push(super::file_reference_arg(path, line, column));
+        let mut command = Command::new(program);
+        command.args(&argv[1..]);
+        super::configure_background_command(&mut command);
+        return command.spawn().map(Some);
+    }
+
+    let operation = wide_null("open");
+    let path = wide_null(&path.display().to_string());
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            path.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if result as isize > 32 {
+        Ok(None)
+    } else {
+        Err(std::io::Error::other(format!(
+            "failed to open file with ShellExecuteW: code {}",
             result as isize
         )))
     }

@@ -236,6 +236,23 @@ pub(crate) fn configure_background_command(command: &mut std::process::Command) 
     configure_background_command_platform(command);
 }
 
+pub(crate) fn file_reference_arg(
+    path: &std::path::Path,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> String {
+    let mut reference = path.display().to_string();
+    if let Some(line) = line {
+        reference.push(':');
+        reference.push_str(&line.to_string());
+        if let Some(column) = column {
+            reference.push(':');
+            reference.push_str(&column.to_string());
+        }
+    }
+    reference
+}
+
 #[cfg(not(windows))]
 fn configure_background_command_platform(_command: &mut std::process::Command) {}
 
@@ -776,6 +793,20 @@ mod tests {
         assert_eq!(live_pane_process_group(shell_pid, agent_pid, token), None);
         let _ = wrapper.kill();
         let _ = wrapper.wait();
+    }
+
+    #[test]
+    fn file_reference_arg_preserves_optional_location() {
+        let path = std::path::Path::new("/tmp/source file.rs");
+        assert_eq!(file_reference_arg(path, None, None), "/tmp/source file.rs");
+        assert_eq!(
+            file_reference_arg(path, Some(12), None),
+            "/tmp/source file.rs:12"
+        );
+        assert_eq!(
+            file_reference_arg(path, Some(12), Some(4)),
+            "/tmp/source file.rs:12:4"
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Pure state mutations on AppState.
 //! These don't need channels, async, or PTY runtime.
 
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use tracing::warn;
@@ -1048,6 +1049,155 @@ pub(super) fn url_from_link_target(target: crate::ghostty::LinkTarget) -> Option
             url_at_byte(&text, clicked_byte).map(str::to_owned)
         }
     }
+}
+
+/// A Ctrl-clicked pane link before plugin, web, or file routing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ActivatedPaneLink {
+    /// An OSC 8 URI or a visible HTTP(S) URL. Arbitrary OSC 8 schemes are
+    /// retained so plugin link handlers keep receiving them.
+    Uri(String),
+    /// A clicked plain-text token that is not a URL.
+    Text { text: String, clicked_byte: usize },
+}
+
+impl ActivatedPaneLink {
+    pub(crate) fn from_target(target: crate::ghostty::LinkTarget) -> Self {
+        match target {
+            crate::ghostty::LinkTarget::Uri(uri) => Self::Uri(uri),
+            crate::ghostty::LinkTarget::Text { text, clicked_byte } => {
+                match url_at_byte(&text, clicked_byte) {
+                    Some(url) => Self::Uri(url.to_owned()),
+                    None => Self::Text { text, clicked_byte },
+                }
+            }
+        }
+    }
+
+    pub(crate) fn uri(&self) -> Option<&str> {
+        match self {
+            Self::Uri(uri) => Some(uri),
+            Self::Text { .. } => None,
+        }
+    }
+
+    /// Resolves an existing local file this link points at. Web URLs never
+    /// resolve, so they keep their browser path.
+    pub(crate) fn file_reference(&self, cwd: Option<&Path>) -> Option<FileReference> {
+        match self {
+            Self::Uri(uri) if safe_web_url(uri).is_none() => file_reference_from_uri(uri),
+            Self::Uri(_) => None,
+            Self::Text { text, clicked_byte } => file_reference_at_byte(text, *clicked_byte, cwd),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileReference {
+    pub(crate) path: PathBuf,
+    pub(crate) line: Option<u32>,
+    pub(crate) column: Option<u32>,
+}
+
+fn file_reference_at_byte(
+    text: &str,
+    clicked_byte: usize,
+    cwd: Option<&Path>,
+) -> Option<FileReference> {
+    let clicked_idx = text.get(..clicked_byte)?.chars().count();
+    let cells = text_cells(text);
+    if clicked_idx >= cells.len() || url_span_at_column(&cells, clicked_idx).is_some() {
+        return None;
+    }
+    let span = quoted_path_span_at_column(&cells, clicked_idx)
+        .or_else(|| token_span_at_column(&cells, clicked_idx))?;
+    let start_byte = byte_index_for_cell(text, span.start);
+    let end_byte = byte_index_after_cell(text, span.end);
+    let candidate = text.get(start_byte..end_byte)?;
+    let (raw_path, line, column) = parse_file_reference(candidate)?;
+    let path = resolve_file_reference_path(raw_path, cwd)?;
+    path.is_file()
+        .then_some(FileReference { path, line, column })
+}
+
+fn parse_file_reference(candidate: &str) -> Option<(&str, Option<u32>, Option<u32>)> {
+    if candidate.is_empty() || candidate.contains("://") {
+        return None;
+    }
+
+    let Some((before_last, last)) = candidate.rsplit_once(':') else {
+        return Some((candidate, None, None));
+    };
+    let Some(last) = last.parse::<u32>().ok().filter(|value| *value > 0) else {
+        return Some((candidate, None, None));
+    };
+
+    if let Some((raw_path, line)) = before_last.rsplit_once(':') {
+        if let Some(line) = line.parse::<u32>().ok().filter(|value| *value > 0) {
+            return (!raw_path.is_empty()).then_some((raw_path, Some(line), Some(last)));
+        }
+    }
+    (!before_last.is_empty()).then_some((before_last, Some(last), None))
+}
+
+fn resolve_file_reference_path(raw_path: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+    let path = if raw_path == "~" {
+        home_dir()?
+    } else if let Some(rest) = raw_path
+        .strip_prefix("~/")
+        .or_else(|| raw_path.strip_prefix("~\\"))
+    {
+        home_dir()?.join(rest)
+    } else {
+        PathBuf::from(raw_path)
+    };
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        cwd.map(|cwd| cwd.join(path))
+    }
+}
+
+fn file_reference_from_uri(uri: &str) -> Option<FileReference> {
+    let encoded = if let Some(path) = uri.strip_prefix("file://localhost") {
+        path
+    } else {
+        let path = uri.strip_prefix("file://")?;
+        if !path.starts_with('/') {
+            return None;
+        }
+        path
+    };
+    let path = PathBuf::from(percent_decode_uri_path(encoded)?);
+    path.is_file().then_some(FileReference {
+        path,
+        line: None,
+        column: None,
+    })
+}
+
+fn percent_decode_uri_path(encoded: &str) -> Option<String> {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut idx = 0;
+    while idx < bytes.len() {
+        if bytes[idx] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(idx + 1..idx + 3)?).ok()?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            idx += 3;
+        } else {
+            decoded.push(bytes[idx]);
+            idx += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 pub(crate) fn safe_web_url(url: &str) -> Option<&str> {
@@ -2565,6 +2715,126 @@ mod tests {
             None
         );
         assert_eq!(selected_url("open file:///tmp/report", "file"), None);
+    }
+
+    fn file_reference_in(text: &str, needle: &str, cwd: &Path) -> Option<FileReference> {
+        file_reference_at_byte(text, text.find(needle).expect("needle"), Some(cwd))
+    }
+
+    #[test]
+    fn file_reference_parser_resolves_against_the_clicked_pane_cwd() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-file-link-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let cwd_a = root.join("worktree-a");
+        let cwd_b = root.join("worktree-b");
+        let path_a = cwd_a.join("src/main.rs");
+        let path_b = cwd_b.join("src/main.rs");
+        std::fs::create_dir_all(path_a.parent().expect("file parent")).expect("cwd a");
+        std::fs::create_dir_all(path_b.parent().expect("file parent")).expect("cwd b");
+        std::fs::write(&path_a, "fn a() {}\n").expect("file a");
+        std::fs::write(&path_b, "fn b() {}\n").expect("file b");
+        let at = |path: &PathBuf, line, column| {
+            Some(FileReference {
+                path: path.clone(),
+                line,
+                column,
+            })
+        };
+
+        let token = "`src/main.rs:12:4`,";
+        assert_eq!(
+            file_reference_in(token, "main.rs", &cwd_a),
+            at(&path_a, Some(12), Some(4))
+        );
+        assert_eq!(
+            file_reference_in(token, ":4", &cwd_b),
+            at(&path_b, Some(12), Some(4))
+        );
+        assert_eq!(
+            file_reference_in("src/main.rs", "main", &cwd_a),
+            at(&path_a, None, None)
+        );
+        assert_eq!(
+            file_reference_in("src/main.rs:9", "main", &cwd_a),
+            at(&path_a, Some(9), None)
+        );
+        let absolute = format!("{}:31", path_a.display());
+        assert_eq!(
+            file_reference_in(&absolute, "main.rs", &cwd_b),
+            at(&path_a, Some(31), None)
+        );
+        assert_eq!(
+            file_reference_at_byte(&absolute, absolute.find("main.rs").expect("path"), None),
+            at(&path_a, Some(31), None),
+            "absolute paths do not need a pane cwd"
+        );
+        assert_eq!(
+            file_reference_at_byte("src/main.rs", 2, None),
+            None,
+            "relative paths need a pane cwd"
+        );
+        assert_eq!(
+            file_reference_in("src/missing.rs:9", "missing", &cwd_a),
+            None
+        );
+        assert_eq!(file_reference_in("HTTP/2", "HTTP", &cwd_a), None);
+        assert_eq!(
+            file_reference_in("https://example.com/src/main.rs", "main", &cwd_a),
+            None
+        );
+        assert_eq!(
+            parse_file_reference(r"C:\repo\src\main.rs:8:2"),
+            Some((r"C:\repo\src\main.rs", Some(8), Some(2)))
+        );
+        assert_eq!(
+            resolve_file_reference_path("~/dev", Some(&cwd_a)),
+            home_dir().map(|home| home.join("dev"))
+        );
+
+        std::fs::remove_dir_all(&root).expect("remove file-link fixture");
+    }
+
+    #[test]
+    fn activated_pane_link_routes_web_plugin_and_file_targets() {
+        let path = std::env::temp_dir().join(format!("herdr file uri {}.txt", std::process::id()));
+        std::fs::write(&path, "link\n").expect("file URI fixture");
+        let uri = format!("file://{}", path.display().to_string().replace(' ', "%20"));
+
+        let file_link =
+            ActivatedPaneLink::from_target(crate::ghostty::LinkTarget::Uri(uri.clone()));
+        assert_eq!(file_link.uri(), Some(uri.as_str()));
+        assert_eq!(
+            file_link.file_reference(None),
+            Some(FileReference {
+                path: path.clone(),
+                line: None,
+                column: None,
+            })
+        );
+        assert_eq!(
+            ActivatedPaneLink::Uri("file://remote.example/tmp/source.rs".into())
+                .file_reference(None),
+            None
+        );
+        assert_eq!(
+            ActivatedPaneLink::Uri("obsidian://open?vault=meta".into()).file_reference(None),
+            None
+        );
+
+        let web = ActivatedPaneLink::from_target(crate::ghostty::LinkTarget::Text {
+            text: "(https://example.com/x)".into(),
+            clicked_byte: 3,
+        });
+        assert_eq!(web, ActivatedPaneLink::Uri("https://example.com/x".into()));
+        assert_eq!(web.file_reference(None), None);
+
+        std::fs::remove_file(path).expect("remove file URI fixture");
     }
 
     #[test]
