@@ -1392,6 +1392,36 @@ async fn popup_synchronized_output_waits_for_complete_frame() {
 }
 
 #[tokio::test]
+async fn popup_on_another_tab_keeps_retained_pane_patches() {
+    let (mut server, _control_rx, render_rx, pane_id) = retained_test_server_with_control(b"BASE");
+    let popup_tab = server.app.state.workspaces[0].test_add_tab(Some("popup"));
+    let popup_runtime = crate::terminal::TerminalRuntime::test_with_screen_bytes(40, 12, b"POPUP");
+    server.app.install_test_popup_runtime(popup_runtime);
+    server.popup_owner_tab_id = server.app.public_tab_id(0, popup_tab);
+    server.render_and_stream();
+    assert!(recv_pane_surface(&render_rx, "baseline without popup")
+        .popup
+        .is_none());
+
+    write_shared_test_pane(&mut server, pane_id, b" more");
+    assert!(server.render_retained_pane_surface_and_stream(&HashSet::from([pane_id])));
+    assert!(matches!(
+        read_server_message(render_rx.recv_timeout(Duration::from_secs(1)).unwrap()),
+        ServerMessage::PaneSurfacePatch(_)
+    ));
+
+    // The tab that shows the popup still takes the complete renderer.
+    server.popup_owner_tab_id = server.app.public_tab_id(0, 0);
+    server.render_and_stream();
+    assert!(recv_pane_surface(&render_rx, "baseline with popup")
+        .popup
+        .is_some());
+    write_shared_test_pane(&mut server, pane_id, b" again");
+    assert!(!server.render_retained_pane_surface_and_stream(&HashSet::from([pane_id])));
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
 async fn zoom_hidden_synchronized_pane_does_not_block_surface() {
     let mut server = test_headless_server();
     let mut workspace = crate::workspace::Workspace::test_new("zoomed-sync");
@@ -3206,6 +3236,16 @@ async fn terminal_popup_is_visible_and_modal_only_on_its_owning_tab() {
     assert!(recv_pane_surface(&second_render, "other tab surface")
         .popup
         .is_none());
+    // An image pasted on the other tab reaches its pane; under the popup it does not.
+    assert!(server.client_clipboard_image_target_is_valid(
+        32,
+        &crate::protocol::ClientClipboardImageTarget::Pane(second_pane_id.clone()),
+    ));
+    let first_pane_id = server.app.public_pane_id(0, first_pane).unwrap();
+    assert!(!server.client_clipboard_image_target_is_valid(
+        31,
+        &crate::protocol::ClientClipboardImageTarget::Pane(first_pane_id),
+    ));
 
     server.handle_server_event(ServerEvent::ClientShellPaneInput {
         client_id: 32,

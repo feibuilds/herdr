@@ -1131,7 +1131,8 @@ impl HeadlessServer {
             }
             protocol::ClientClipboardImageTarget::Pane(pane_id) => {
                 !self.handoff_in_progress
-                    && self.app.state.popup_pane.is_none()
+                    && (self.app.state.popup_pane.is_none()
+                        || self.popup_owner_tab_id != self.shell_tab_id_for_client(client_id))
                     && self
                         .clients
                         .get(&client_id)

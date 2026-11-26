@@ -625,7 +625,17 @@ impl ClientShellState {
             return None;
         }
         if let Some(target) = self.popup_input_target() {
-            return Some(target);
+            // Herdr UI opened over the popup by a binding (an overlay, the
+            // workspace picker, resize mode) takes keys through the normal
+            // routing below.
+            if self.overlay.is_none()
+                && matches!(
+                    self.mode,
+                    ClientShellMode::Terminal | ClientShellMode::Prefix
+                )
+            {
+                return self.route_popup_key_press(key, target, outcome);
+            }
         }
         if self.popup_pending {
             return None;
@@ -731,6 +741,49 @@ impl ClientShellState {
                 None
             }
         }
+    }
+
+    /// Routes a key while a popup is shown. The popup gets every key except
+    /// Herdr's prefix and keybindings, so switching tab or workspace still
+    /// works; the server keeps the popup with the tab that opened it and shows
+    /// it again when that tab returns. The prefix pressed twice reaches the
+    /// popup, as it does a pane.
+    fn route_popup_key_press(
+        &mut self,
+        key: &crate::input::TerminalKey,
+        target: ClientInputTarget,
+        outcome: &mut ClientShellInput,
+    ) -> Option<ClientInputTarget> {
+        if matches!(key.code, KeyCode::Modifier(_)) {
+            return Some(target);
+        }
+        if self.mode == ClientShellMode::Prefix {
+            self.mode = ClientShellMode::Terminal;
+            outcome.repaint = true;
+            if self.config.keybinds.matches_prefix(key) {
+                return Some(target);
+            }
+            if key.code != KeyCode::Esc {
+                if let Some(binding) =
+                    crate::input::resolve_prefix_binding(&self.config.keybinds.keybinds, key)
+                {
+                    self.record_binding(binding, outcome);
+                }
+            }
+            return None;
+        }
+        if let Some(binding) =
+            crate::input::resolve_direct_binding(&self.config.keybinds.keybinds, key)
+        {
+            self.record_binding(binding, outcome);
+            return None;
+        }
+        if self.config.keybinds.matches_prefix(key) {
+            self.mode = ClientShellMode::Prefix;
+            outcome.repaint = true;
+            return None;
+        }
+        Some(target)
     }
 
     pub(super) fn copy_or_terminal_mode(&self) -> ClientShellMode {

@@ -676,6 +676,31 @@ impl ClientShellState {
         }
     }
 
+    /// While a popup is shown, the shell chrome around it (sidebar, tab bar)
+    /// still takes the mouse, so a click can switch tab or workspace. Panes
+    /// under the popup and their split handles stay out of reach.
+    fn popup_passes_mouse_to_chrome(&self, point: (u16, u16)) -> bool {
+        if self.chrome_drag.is_some() {
+            return true;
+        }
+        let over_popup = self
+            .hits
+            .popup
+            .as_ref()
+            .is_some_and(|hit| super::contains(hit.rect, point));
+        let over_pane = self
+            .hits
+            .panes
+            .iter()
+            .any(|hit| super::contains(hit.rect, point));
+        let over_split = self
+            .hits
+            .pane_splits
+            .iter()
+            .any(|hit| super::contains(hit.hit_rect, point));
+        !(over_popup || over_pane || over_split)
+    }
+
     /// Routes mouse input through overlays, shell controls, and pane interactions.
     ///
     /// Hit-test order determines which overlapping control receives the event;
@@ -939,10 +964,12 @@ impl ClientShellState {
                     }
                     MouseEventKind::Up(_) | MouseEventKind::Drag(_) | MouseEventKind::Moved => {}
                 }
+                return;
             }
-            return;
         }
-        if self.popup_terminal_id.is_some() {
+        if (self.popup_terminal_id.is_some() || self.hits.popup.is_some())
+            && !self.popup_passes_mouse_to_chrome(point)
+        {
             return;
         }
         if self.config.mouse_capture

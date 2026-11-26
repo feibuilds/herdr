@@ -246,9 +246,12 @@ impl HeadlessServer {
             }};
         }
 
+        // A popup alone is not unsafe: recipients that show it fail the
+        // baseline check below, and its own output matches no recipient pane.
+        // A popup left open on a background tab keeps the other tabs on this
+        // fast path.
         if pty_sources.is_empty()
             || self.app.full_redraw_pending
-            || self.app.state.popup_pane.is_some()
             || self.app.state.reveal_hidden_cursor_for_cjk_ime
         {
             fallback!("unsafe_state");

@@ -206,14 +206,122 @@ fn client_composes_popup_terminal_content_inside_client_owned_chrome() {
     );
 }
 
+fn snapshot_with_second_tab() -> ClientShellSnapshot {
+    let mut projected = snapshot();
+    let mut second_tab = projected.tabs[0].clone();
+    second_tab.tab_id = "tab_2".into();
+    second_tab.number = 2;
+    second_tab.label = "2".into();
+    second_tab.focused = false;
+    projected.tabs.push(second_tab);
+    projected
+}
+
+fn is_focus_of_second_tab(action: &ClientShellAction) -> bool {
+    matches!(
+        action,
+        ClientShellAction::Endpoint { request, .. }
+            if matches!(
+                &request.method,
+                crate::api::schema::Method::TabFocus(target) if target.tab_id == "tab_2"
+            )
+    )
+}
+
 #[test]
-fn popup_owns_keys_text_paste_and_mouse_before_shell_controls() {
+fn popup_leaves_the_prefix_and_its_bindings_to_herdr() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot_with_second_tab()));
+    state.set_pane_surface(surface_with_popup());
+    state.compose(106, 20).expect("popup frame");
+
+    let prefix = state.handle_input_bytes(b"\x02");
+    assert!(prefix.requests.is_empty());
+    assert_eq!(state.mode, ClientShellMode::Prefix);
+    let next_tab = state.handle_input_bytes(b"n");
+    assert!(next_tab.requests.is_empty());
+    assert!(next_tab.actions.iter().any(is_focus_of_second_tab));
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+
+    // The prefix pressed twice reaches the popup, as it does a pane.
+    assert!(state.handle_input_bytes(b"\x02").requests.is_empty());
+    assert!(matches!(
+        &state.handle_input_bytes(b"\x02").requests[..],
+        [ClientMessage::ClientShellPopupInput { terminal_id, .. }]
+            if terminal_id == "terminal-popup"
+    ));
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+
+    // Esc cancels the prefix without reaching the popup.
+    assert!(state.handle_input_bytes(b"\x02").requests.is_empty());
+    let cancel = state.handle_input_bytes(b"\x1b");
+    assert!(cancel.requests.is_empty());
+    assert!(cancel.actions.is_empty());
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+
+    // Copy mode would act on the pane hidden under the popup.
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::CopyMode),
+        &mut ClientShellInput::default(),
+    );
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+    assert!(state.copy_mode.is_none());
+}
+
+#[test]
+fn popup_leaves_tab_bar_clicks_to_herdr_but_not_the_panes_under_it() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot_with_second_tab()));
+    state.set_pane_surface(surface_with_popup());
+    state.compose(106, 20).expect("popup frame");
+    let click = |state: &mut ClientShellState, (column, row): (u16, u16)| {
+        [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ]
+        .into_iter()
+        .map(|kind| {
+            state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::empty(),
+            })])
+        })
+        .collect::<Vec<_>>()
+    };
+
+    let popup = state.hits.popup.as_ref().expect("popup hit").rect;
+    let pane = state.hits.panes[0].rect;
+    let under_popup = (pane.x, pane.y);
+    assert!(!super::super::contains(popup, under_popup));
+    for outcome in click(&mut state, under_popup) {
+        assert!(outcome.requests.is_empty());
+        assert!(outcome.actions.is_empty());
+    }
+
+    let (second_tab, _) = state
+        .hits
+        .tabs
+        .iter()
+        .find(|(_, tab_id)| tab_id == "tab_2")
+        .cloned()
+        .expect("second tab hit");
+    let outcomes = click(&mut state, (second_tab.x, second_tab.y));
+    assert!(outcomes
+        .iter()
+        .flat_map(|outcome| outcome.actions.iter())
+        .any(is_focus_of_second_tab));
+}
+
+#[test]
+fn popup_owns_plain_keys_text_paste_and_mouse_before_shell_controls() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface_with_popup());
     state.compose(106, 20).expect("popup frame");
 
-    for bytes in [b"x".as_slice(), b"\x02".as_slice(), b"\x1b".as_slice()] {
+    for bytes in [b"x".as_slice(), b"\x1b".as_slice()] {
         let input = state.handle_input_bytes(bytes);
         assert!(matches!(
             &input.requests[..],

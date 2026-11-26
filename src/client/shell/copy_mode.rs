@@ -10,6 +10,10 @@ impl ClientShellState {
     }
 
     pub(super) fn enter_copy_mode(&mut self, outcome: &mut ClientShellInput) -> bool {
+        // The focused pane is under the popup, so copy mode would be invisible.
+        if self.popup_terminal_id.is_some() || self.popup_pending {
+            return false;
+        }
         let pane_id = match self.focused_pane_id() {
             Some(pane_id) => pane_id,
             None => return false,
